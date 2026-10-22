@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Daily Headlines</title>
+  <meta name="description" content="A newspaper-style front page of today's top US headlines.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
+  <!-- Same stylesheet as the Dash app (assets/style.css) -->
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <!-- Static version of app.py for GitHub Pages. Same layout and class names. -->
+  <div class="page">
+    <div class="top-strip">
+      <span id="today"></span>
+      <input id="search" class="search" type="text" placeholder="Search the paper...">
+      <span>New edition every 6 hours</span>
+    </div>
+
+    <header class="masthead">
+      <h1>The Daily Headlines</h1>
+      <div class="motto">“All the news that's fit to print, fetched with Python.”</div>
+      <div class="edition-bar">
+        <span>EAS503 Edition</span>
+        <span id="updated"></span>
+        <span>Price: Free</span>
+      </div>
+    </header>
+
+    <nav id="tabs" class="nav"></nav>
+
+    <div class="ticker">
+      <span class="ticker-label">Latest</span>
+      <div class="ticker-window"><div id="ticker" class="ticker-track"></div></div>
+    </div>
+
+    <div id="featured" style="margin-top: 24px"></div>
+
+    <div class="section-title">In the Headlines</div>
+    <div class="wordcloud-box"><img src="wordcloud.png" alt="Word cloud of headlines"></div>
+
+    <div class="section-title">More Stories</div>
+    <div id="grid" class="columns"></div>
+
+    <footer class="footer">EAS503 · News app prototype built with Dash · Data from NewsAPI.org</footer>
+  </div>
+
+  <!-- news_data.js is written by build.py -->
+  <script src="news_data.js"></script>
+  <script>
+    const articles = NEWS.articles;
+    const categories = ["all", ...NEWS.categories];
+    let currentCategory = "all";
+
+    // Make text safe to put inside HTML
+    function esc(text) {
+      return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    function timeAgo(dateString) {
+      const hours = Math.floor((Date.now() - new Date(dateString)) / 3600000);
+      if (hours < 1) return "just now";
+      if (hours < 24) return hours + "h ago";
+      return Math.floor(hours / 24) + "d ago";
+    }
+
+    // ---------- Building blocks (same as story_photo, byline, ... in app.py) ----------
+    function photo(a) {
+      if (!a.image) return `<div class="photo"><div class="no-photo">${esc(a.source)}</div></div>`;
+      return `<div class="photo"><img src="${esc(a.image)}" alt="${esc(a.source)}" loading="lazy"></div>`;
+    }
+
+    function byline(a) {
+      const author = a.author ? `By ${esc(a.author)} · ` : "";
+      return `<div class="byline"><span>${author}<b>${esc(a.source)}</b></span><span>${timeAgo(a.publishedAt)}</span></div>`;
+    }
+
+    function leadStory(a) {
+      return `<a class="lead" href="${esc(a.url)}" target="_blank" rel="noopener">
+        <div>${photo(a)}<div class="caption">Photo via ${esc(a.source)}</div></div>
+        <div>
+          <span class="kicker">Top Story · ${esc(a.category)}</span>
+          <h2>${esc(a.title)}</h2>
+          <p class="desc">${esc(a.description)}</p>
+          ${byline(a)}
+        </div>
+      </a>`;
+    }
+
+    function storyCard(a) {
+      return `<a class="story" href="${esc(a.url)}" target="_blank" rel="noopener">
+        ${photo(a)}
+        <span class="kicker">${esc(a.category)}</span>
+        <h3>${esc(a.title)}</h3>
+        <p class="desc">${esc(a.description.slice(0, 150))}</p>
+        ${byline(a)}
+      </a>`;
+    }
+
+    // ---------- Draw the page (same as show_news in app.py) ----------
+    function showNews() {
+      const search = document.getElementById("search").value.toLowerCase();
+
+      document.getElementById("tabs").innerHTML = categories.map(cat => {
+        const count = cat === "all" ? articles.length : articles.filter(a => a.category === cat).length;
+        const label = cat === "all" ? "Front Page" : cat[0].toUpperCase() + cat.slice(1);
+        return `<button class="nav-item${cat === currentCategory ? " active" : ""}" data-cat="${cat}">${label}<span class="count">${count}</span></button>`;
+      }).join("");
+
+      const visible = articles.filter(a =>
+        (currentCategory === "all" || a.category === currentCategory) &&
+        (a.title + " " + a.description + " " + a.source + " " + a.author).toLowerCase().includes(search));
+
+      const printed = new Date(NEWS.printedAt).toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+      document.getElementById("updated").textContent = `${visible.length} stories · Printed ${printed}`;
+
+      if (visible.length === 0) {
+        document.getElementById("featured").innerHTML = `<p class="empty">No stories match your search.</p>`;
+        document.getElementById("grid").innerHTML = "";
+        return;
+      }
+      document.getElementById("featured").innerHTML = leadStory(visible[0]);
+      document.getElementById("grid").innerHTML = visible.slice(1).map(storyCard).join("");
+    }
+
+    // Section buttons
+    document.getElementById("tabs").addEventListener("click", event => {
+      const button = event.target.closest(".nav-item");
+      if (!button) return;
+      currentCategory = button.dataset.cat;
+      showNews();
+    });
+    document.getElementById("search").addEventListener("input", showNews);
+
+    // Ticker: newest 12 headlines, repeated so the scroll loops smoothly
+    const tickerItems = articles.slice(0, 12)
+      .map(a => `<a class="ticker-item" href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.title)}</a>`).join("");
+    document.getElementById("ticker").innerHTML = tickerItems + tickerItems;
+
+    document.getElementById("today").textContent =
+      new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+
+    showNews();
+  </script>
+</body>
+</html>

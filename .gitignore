@@ -1,0 +1,15 @@
+# Secrets
+.env
+
+# Generated files
+_site/
+assets/wordcloud.png
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS
+.DS_Store
