@@ -35,6 +35,7 @@ jobs:
         run: python static_site/build.py
         env:
           NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}   # stored in repo Settings > Secrets, never in the code
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

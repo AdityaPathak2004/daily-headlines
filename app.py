@@ -3,10 +3,13 @@
 # Online: static_site/build.py turns this into a static page for GitHub Pages
 
 import os
+import json
 from datetime import datetime, timezone
-from dash import Dash, dcc, html, Input, Output, ALL, ctx, no_update
+from dash import Dash, dcc, html, Input, Output, State, ALL, ctx, no_update
 from newsapi import NewsApiClient
 from wordcloud import WordCloud, STOPWORDS
+from google import genai
+from google.genai import types
 
 # Load NEWSAPI_KEY from the .env file next to this script (keeps the key out of the code)
 _env = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
@@ -17,6 +20,13 @@ if os.path.exists(_env):
             os.environ.setdefault(_k, _v)
 
 newsapi = NewsApiClient(api_key=os.environ.get('NEWSAPI_KEY'))
+
+# Google Gemini (generative AI). If there's no GEMINI_API_KEY, the AI parts are simply hidden.
+GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-2.5-flash"]   # tried in order (backup if one is busy)
+gemini = None
+if os.environ.get("GEMINI_API_KEY"):
+    gemini = genai.Client(api_key = os.environ["GEMINI_API_KEY"],
+                          http_options = types.HttpOptions(timeout = 60_000))   # milliseconds
 
 categories = ['business', 'entertainment', 'health', 'science', 'sports', 'technology', 'general']
 
@@ -44,8 +54,66 @@ def fetch_news():
     articles.sort(key = lambda a: a["publishedAt"], reverse = True)   # newest first
     make_wordcloud(articles)
     return {"fetchedAt": datetime.now().strftime("%b %d, %Y %I:%M %p"),
+            "briefing": ai_briefing(articles),
             "version": int(datetime.now().timestamp()),   # changes on every fetch so the browser reloads the image
             "articles": articles}
+
+
+# ---------- Generative AI (Gemini) ----------
+def headlines_for_ai(articles):
+    # Number every story so Gemini can point back to the ones it used
+    return "\n".join(f"[{i}] ({a['category']}, {a['source']}) {a['title']}. {a['description']}"
+                     for i, a in enumerate(articles))
+
+
+def ask_gemini(prompt, schema):
+    # Ask Gemini for JSON in a fixed shape, so the answer is easy to use in Python
+    for model in GEMINI_MODELS:
+        try:
+            response = gemini.models.generate_content(
+                model = model,
+                contents = prompt,
+                config = types.GenerateContentConfig(response_mime_type = "application/json", response_schema = schema),
+            )
+            return json.loads(response.text)
+        except Exception as error:
+            last_error = error
+            print(f"Gemini model {model} failed, trying the next one:", str(error)[:120])
+    raise last_error
+
+
+def ai_briefing(articles):
+    # Front-page summary written by Gemini. Returns None if AI is off or fails.
+    if gemini is None:
+        return None
+    prompt = ("You are the editor of a newspaper. Using ONLY these headlines, write today's front-page briefing.\n"
+              "- title: a punchy newspaper-style headline (max 10 words) naming the day's biggest story\n"
+              "- overview: 3-4 sentences covering the most important stories, with specific names, companies "
+              "and numbers from the headlines. No vague filler like 'various developments' or 'headwinds'.\n"
+              "- key_points: 4 one-sentence points, each about a different specific story from a different section.\n"
+              "Be factual and neutral; don't invent details that aren't in the headlines.\n\n" + headlines_for_ai(articles))
+    schema = {"type": "OBJECT",
+              "properties": {"title": {"type": "STRING"},
+                             "overview": {"type": "STRING"},
+                             "key_points": {"type": "ARRAY", "items": {"type": "STRING"}}},
+              "required": ["title", "overview", "key_points"]}
+    try:
+        return ask_gemini(prompt, schema)
+    except Exception as error:
+        print("Gemini briefing failed:", error)
+        return None
+
+
+def ai_answer(question, articles):
+    # Answer a reader's question using only today's stories
+    prompt = ("Answer the reader's question using ONLY the news stories below. Keep it to 2-4 sentences. "
+              "If the stories don't cover it, say so. List the numbers of the stories you used.\n\n"
+              f"Question: {question}\n\nStories:\n{headlines_for_ai(articles)}")
+    schema = {"type": "OBJECT",
+              "properties": {"answer": {"type": "STRING"},
+                             "sources": {"type": "ARRAY", "items": {"type": "INTEGER"}}},
+              "required": ["answer", "sources"]}
+    return ask_gemini(prompt, schema)
 
 
 # ---------- Word cloud of all headlines, saved to assets/wordcloud.png ----------
@@ -183,6 +251,18 @@ app.layout = html.Div([
 
     html.Div(id = "featured", style = {"marginTop": "24px"}),
 
+    html.Div(id = "briefing"),
+
+    html.Div([
+        html.Div("Ask the Editor", className = "section-title"),
+        html.Div([
+            dcc.Input(id = "question", type = "text", className = "ask-input", debounce = False,
+                      placeholder = "Ask about today's news, e.g. \"What's happening with AI?\""),
+            html.Button("Ask", id = "ask", className = "refresh"),
+        ], className = "ask-row"),
+        dcc.Loading(html.Div(id = "answer"), type = "dot", color = "#9b1c1c"),
+    ], style = {"display": "block" if gemini else "none"}),
+
     html.Div("In the Headlines", className = "section-title"),
     html.Div(html.Img(id = "wordcloud", src = "assets/wordcloud.png", alt = "Word cloud of headlines"),
              className = "wordcloud-box"),
@@ -209,6 +289,45 @@ def pick_category(clicks):
     if not any(clicks):
         return no_update
     return ctx.triggered_id["index"]
+
+
+# Editor's Briefing (written by Gemini when the news is fetched)
+@app.callback(Output("briefing", "children"), Input("news", "data"))
+def show_briefing(news):
+    briefing = news.get("briefing")
+    if not briefing:
+        return None
+    return html.Div([
+        html.Div("Editor's Briefing", className = "kicker"),
+        html.H3(briefing["title"]),
+        html.P(briefing["overview"], className = "briefing-overview"),
+        html.Div("What to know", className = "briefing-label"),
+        html.Ul([html.Li(point) for point in briefing["key_points"]]),
+        html.Div("Summarised by Google Gemini from today's headlines. AI can make mistakes.",
+                 className = "ai-note"),
+    ], className = "briefing")
+
+
+# Ask the Editor: Gemini answers questions about today's stories
+@app.callback(Output("answer", "children"),
+              Input("ask", "n_clicks"), Input("question", "n_submit"),
+              State("question", "value"), State("news", "data"), prevent_initial_call = True)
+def answer_question(n_clicks, n_submit, question, news):
+    if not question or not question.strip():
+        return html.P("Type a question first.", className = "ai-note")
+    try:
+        result = ai_answer(question.strip(), news["articles"])
+    except Exception as error:
+        return html.P(f"Gemini couldn't answer right now ({type(error).__name__}). Try again in a moment.",
+                      className = "ai-note")
+    sources = [news["articles"][i] for i in result["sources"] if 0 <= i < len(news["articles"])]
+    return html.Div([
+        html.P(result["answer"], className = "answer-text"),
+        html.Div([html.Span("Sources: ", className = "briefing-label")] +
+                 [html.A(a["title"], href = a["url"], target = "_blank", className = "answer-source")
+                  for a in sources[:5]]) if sources else None,
+        html.Div("Answered by Google Gemini using only today's headlines. AI can make mistakes.", className = "ai-note"),
+    ], className = "answer")
 
 
 # Word cloud: point the image at the new file after each fetch

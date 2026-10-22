@@ -39,6 +39,9 @@
 
     <div id="featured" style="margin-top: 24px"></div>
 
+    <!-- Editor's Briefing, written by Google Gemini when the page is built -->
+    <div id="briefing"></div>
+
     <div class="section-title">In the Headlines</div>
     <div class="wordcloud-box"><img src="wordcloud.png" alt="Word cloud of headlines"></div>
 
@@ -139,6 +142,19 @@
     const tickerItems = articles.slice(0, 12)
       .map(a => `<a class="ticker-item" href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.title)}</a>`).join("");
     document.getElementById("ticker").innerHTML = tickerItems + tickerItems;
+
+    // Editor's Briefing (same as show_briefing in app.py)
+    const b = NEWS.briefing;
+    if (b) {
+      document.getElementById("briefing").innerHTML = `<div class="briefing">
+        <div class="kicker">Editor's Briefing</div>
+        <h3>${esc(b.title)}</h3>
+        <p class="briefing-overview">${esc(b.overview)}</p>
+        <div class="briefing-label">What to know</div>
+        <ul>${b.key_points.map(p => `<li>${esc(p)}</li>`).join("")}</ul>
+        <div class="ai-note">Summarised by Google Gemini from today's headlines. AI can make mistakes.</div>
+      </div>`;
+    }
 
     document.getElementById("today").textContent =
       new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" });

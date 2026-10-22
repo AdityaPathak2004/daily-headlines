@@ -1,3 +1,4 @@
 dash==4.4.1
 newsapi-python==0.2.7
 wordcloud==1.9.6
+google-genai==2.32.0

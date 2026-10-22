@@ -24,6 +24,7 @@ data = {
     "printedAt": datetime.now(timezone.utc).isoformat(),
     "categories": app.categories,
     "articles": app.initial_news["articles"],
+    "briefing": app.initial_news.get("briefing"),   # written by Gemini (None if no GEMINI_API_KEY)
 }
 
 with open(os.path.join(site, "news_data.js"), "w") as f:
